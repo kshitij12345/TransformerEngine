@@ -33,19 +33,10 @@ code is generated -- they do not appear in the final compiled graph.
 
 from __future__ import annotations
 import copy as _copy
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union
 
 import torch
-
-
-def _contiguous_stride(shape: Tuple[int, ...]) -> Tuple[int, ...]:
-    """Row-major (contiguous) stride for ``shape``."""
-    stride: List[int] = []
-    acc = 1
-    for dim in reversed(shape):
-        stride.append(acc)
-        acc *= dim
-    return tuple(reversed(stride))
+from torch._prims_common import make_contiguous_strides_for
 
 
 def make_empty_traceable(
@@ -86,7 +77,9 @@ def make_empty_traceable(
     ctx = q.create_metadata(shape, dtype=dtype, requires_grad=requires_grad)
     inner = q.alloc_tensors(shape, device=device)
     storage_cls = ctx["cls"]
-    result = storage_cls.__tensor_unflatten__(inner, ctx, shape, _contiguous_stride(shape))
+    result = storage_cls.__tensor_unflatten__(
+        inner, ctx, shape, make_contiguous_strides_for(shape)
+    )
     if requires_grad and hasattr(result, "requires_grad_"):
         result.requires_grad_(True)
     result._te_flat_names = tuple(inner.keys())
@@ -134,4 +127,6 @@ def reassemble_from_flat(
         return chunk[0]
     inner = dict(zip(names, chunk))
     shape = tuple(template.shape)
-    return type(template).__tensor_unflatten__(inner, ctx, shape, _contiguous_stride(shape))
+    return type(template).__tensor_unflatten__(
+        inner, ctx, shape, make_contiguous_strides_for(shape)
+    )
