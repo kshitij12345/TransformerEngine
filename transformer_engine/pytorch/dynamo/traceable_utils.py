@@ -77,9 +77,7 @@ def make_empty_traceable(
     ctx = q.create_metadata(shape, dtype=dtype, requires_grad=requires_grad)
     inner = q.alloc_tensors(shape, device=device)
     storage_cls = ctx["cls"]
-    result = storage_cls.__tensor_unflatten__(
-        inner, ctx, shape, make_contiguous_strides_for(shape)
-    )
+    result = storage_cls.__tensor_unflatten__(inner, ctx, shape, make_contiguous_strides_for(shape))
     if requires_grad and hasattr(result, "requires_grad_"):
         result.requires_grad_(True)
     result._te_flat_names = tuple(inner.keys())

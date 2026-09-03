@@ -768,7 +768,6 @@ def _flatten_value(
     )
 
 
-
 # Trailing slots in every fwd-impl return: ``tensors_to_save, ctx_attrs``.
 # User-output count is ``len(result) - this``.
 _FWD_TRAILING_SLOTS = 2
@@ -879,8 +878,7 @@ class _OutputPlan:
         template: Optional[Any], flat: Sequence[Optional[torch.Tensor]], start: int, stop: int
     ) -> Any:
         chunk = [_decode_none(t) for t in flat[start:stop]]
-        # ``template is None`` is the op-boundary sentinel for an absent output.
-        return reassemble_from_flat(template, chunk) if template is not None else None
+        return reassemble_from_flat(template, chunk)
 
     def user_outputs(self, flat: Sequence[Optional[torch.Tensor]]) -> List[Any]:
         """Rebuild the structured user outputs from the op's flat return."""

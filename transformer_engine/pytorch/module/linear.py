@@ -852,7 +852,9 @@ def _linear_forward_fake(
     weightmat_is_storage = False
     weightmat_aliases_weight = False
     if fp8_or_debug:
-        if weight_quantizer is not None and (not isinstance(weight, QuantizedTensorStorage) or debug):
+        if weight_quantizer is not None and (
+            not isinstance(weight, QuantizedTensorStorage) or debug
+        ):
             columnwise_usage = is_grad_enabled and args.input_requires_grad and not args.is_fsdp2
             if args.backward_override is not None:
                 columnwise_usage = False
@@ -876,7 +878,6 @@ def _linear_forward_fake(
                 tuple(weight.shape),
                 dtype=activation_dtype,
                 device=weight.device,
-                requires_grad=False,
             )
             weightmat_is_storage = True
             update_ws = args.is_first_microbatch is None or args.is_first_microbatch
@@ -886,7 +887,6 @@ def _linear_forward_fake(
                     tuple(weight.shape),
                     dtype=activation_dtype,
                     device=weight.device,
-                    requires_grad=False,
                 )
     else:
         weightmat_aliases_weight = weight.dtype == activation_dtype
@@ -931,9 +931,7 @@ def _linear_forward_fake(
                 # the quantizer, so the shared (value-opaque) instance on
                 # ``args`` is never mutated.
                 save_q = (
-                    input_quantizer.copy()
-                    if hasattr(input_quantizer, "copy")
-                    else input_quantizer
+                    input_quantizer.copy() if hasattr(input_quantizer, "copy") else input_quantizer
                 )
                 if own_quantized_input and not save_original_input:
                     if args.backward_override is not None:
