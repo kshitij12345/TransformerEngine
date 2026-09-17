@@ -42,7 +42,7 @@ from transformer_engine.pytorch.tensor.float8_blockwise_tensor import Float8Bloc
 from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
 from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
 from transformer_engine.pytorch.quantized_tensor import QuantizedTensor, Quantizer
-from transformer_engine.pytorch.dynamo import TensorSpec, to_tensor_spec
+from transformer_engine.pytorch.dynamo import make_empty_traceable
 from transformer_engine.pytorch import (
     is_fp8_available,
     is_mxfp8_available,
@@ -1535,7 +1535,7 @@ def test_quantizer_value_object_fullgraph(factory):
 
 
 # ---------------------------------------------------------------------------
-# torch.compile-traceable allocation primitives + TensorSpec
+# torch.compile-traceable allocation primitives + make_empty_traceable
 # ---------------------------------------------------------------------------
 
 
@@ -1554,8 +1554,8 @@ _SPEC_QUANTIZERS = [
 def _build_from_primitives(quantizer, shape, dtype, device="cpu"):
     """Assemble a quantized tensor straight from the quantizer primitives:
     ``alloc_tensors`` (inner tensors) + ``create_metadata`` (ctx) + the storage's
-    ``__tensor_unflatten__`` -- i.e. exactly what ``TensorSpec.create_tensor``
-    does, but without going through :class:`TensorSpec`.
+    ``__tensor_unflatten__`` -- i.e. exactly what ``make_empty_traceable`` does,
+    but without going through it.
     """
     names = tuple(quantizer.inner_tensor_specs(shape))
     ctx = quantizer.create_metadata(shape, dtype=dtype)
@@ -1662,7 +1662,7 @@ def test_python_alloc_matches_cpp_make_empty(factory, shape, rowwise, columnwise
     Builds the same quantized tensor twice: via ``Quantizer.make_empty``
     (``tex.create_empty_quantized_tensor``, the C++ path) and via the Python
     primitives ``inner_tensor_specs`` + ``create_metadata`` + ``alloc_tensors``
-    + ``__tensor_unflatten__`` (exactly what ``TensorSpec.create_tensor``
+    + ``__tensor_unflatten__`` (exactly what ``make_empty_traceable``
     does). Checks:
 
     * structural parity -- same concrete class, buffer set, per-buffer
@@ -1780,66 +1780,57 @@ def test_python_alloc_matches_cpp_make_empty(factory, shape, rowwise, columnwise
         torch.testing.assert_close(py.dequantize(), expected, rtol=0.0, atol=0.0)
 
 
-# ----- TensorSpec -----
+# ----- make_empty_traceable -----
 
 
 @pytest.mark.parametrize("factory, shape", _SPEC_QUANTIZERS)
-def test_tensor_spec_matches_primitives(factory, shape):
-    """TensorSpec is a thin wrapper: its ``create_metadata`` /
-    ``create_inner_tensors`` / ``create_tensor`` match building everything
-    directly from the quantizer primitives."""
+def test_make_empty_traceable_matches_primitives(factory, shape):
+    """make_empty_traceable is equivalent to building from quantizer primitives
+    directly (alloc_tensors + create_metadata + __tensor_unflatten__)."""
     q = factory()
-    spec = TensorSpec(shape=shape, dtype=torch.bfloat16, quantizer=q, device=torch.device("cpu"))
-    assert spec.is_quantized
-
-    # Metadata matches the quantizer's.
-    assert spec.create_metadata() == q.create_metadata(shape, dtype=torch.bfloat16)
-
-    # inner_names follows the storage's canonical __tensor_flatten__ order (the
-    # order the real op flattens its outputs to), while create_inner_tensors
-    # matches the inner_tensor_specs geometry (a name->shape/dtype mapping).
-    specs = q.inner_tensor_specs(shape)
+    tensor = make_empty_traceable(q, shape, dtype=torch.bfloat16, device="cpu")
     direct = _build_from_primitives(q, shape, torch.bfloat16)
     names = tuple(direct.__tensor_flatten__()[0])
-    assert set(names) == set(specs)
-    assert spec.inner_names() == names
-    inner_tensors = spec.create_inner_tensors()
-    assert len(inner_tensors) == len(names)
-    for name, inner in zip(names, inner_tensors):
-        exp_shape, exp_dtype = specs[name]
-        assert tuple(inner.shape) == tuple(exp_shape)
-        assert inner.dtype == exp_dtype
-
-    # The assembled tensor matches one built directly from the primitives.
-    assert _signature(spec.create_tensor(), names) == _signature(direct, names)
+    assert set(names) == set(q.inner_tensor_specs(shape))
+    assert tensor._te_flat_names == names
+    assert _signature(tensor, names) == _signature(direct, names)
 
 
 @pytest.mark.parametrize("factory, shape", _SPEC_QUANTIZERS)
-@pytest.mark.parametrize("fake", [False, True], ids=["eager", "fake"])
-def test_tensor_spec_create_tensor(factory, shape, fake):
-    """``create_tensor`` yields a quantized tensor with the right shape/dtype;
-    its inner tensors are fake exactly under ``FakeTensorMode``."""
+def test_make_empty_traceable_eager(factory, shape):
+    """make_empty_traceable (no fake) yields a real quantized tensor."""
     q = factory()
-    spec = TensorSpec(shape=shape, dtype=torch.bfloat16, quantizer=q, device=torch.device("cpu"))
-    with FakeTensorMode() if fake else contextlib.nullcontext():
-        out = spec.create_tensor()
+    out = make_empty_traceable(q, shape, dtype=torch.bfloat16, device="cpu")
     assert isinstance(out, QuantizedTensor)
     assert tuple(out.shape) == tuple(shape)
     assert out.dtype == torch.bfloat16
-    for name in spec.inner_names():
-        assert isinstance(getattr(out, name), FakeTensor) == fake
+    for name in out._te_flat_names:
+        assert not isinstance(getattr(out, name), FakeTensor)
 
 
 @pytest.mark.parametrize("factory, shape", _SPEC_QUANTIZERS)
-def test_tensor_spec_create_tensor_compiles(factory, shape):
-    """``TensorSpec.create_tensor`` traces under ``fullgraph=True`` (CPU)."""
+def test_make_empty_traceable_fake(factory, shape):
+    """make_empty_traceable under FakeTensorMode yields a fake-backed quantized
+    tensor with the right shape/dtype and fake inner buffers."""
+    q = factory()
+    with FakeTensorMode():
+        out = make_empty_traceable(q, shape, dtype=torch.bfloat16, device="cpu")
+    assert isinstance(out, QuantizedTensor)
+    assert tuple(out.shape) == tuple(shape)
+    assert out.dtype == torch.bfloat16
+    for name in out._te_flat_names:
+        assert isinstance(getattr(out, name), FakeTensor)
+
+
+@pytest.mark.parametrize("factory, shape", _SPEC_QUANTIZERS)
+def test_make_empty_traceable_compiles(factory, shape):
+    """make_empty_traceable traces under torch.compile(fullgraph=True) (CPU)."""
     q = factory()
 
     def fn(x):
-        spec = TensorSpec(shape=tuple(x.shape), dtype=x.dtype, quantizer=q, device=x.device)
-        t = spec.create_tensor()
+        t = make_empty_traceable(q, tuple(x.shape), dtype=x.dtype, device=x.device)
         acc = x.new_zeros(())
-        for name in spec.inner_names():
+        for name in t._te_flat_names:
             acc = acc + getattr(t, name).float().sum()
         return acc
 
@@ -1849,34 +1840,29 @@ def test_tensor_spec_create_tensor_compiles(factory, shape):
     assert out.shape == ()
 
 
-def test_to_tensor_spec_plain():
-    """``to_tensor_spec`` describes a plain tensor."""
-    t = torch.empty(2, 3, dtype=torch.float32)
-    spec = to_tensor_spec(t)
-    assert not spec.is_quantized
-    assert spec.shape == (2, 3)
-    assert spec.dtype == torch.float32
-    assert spec.inner_names() == ("data",)
+def test_make_empty_traceable_plain_tensor():
+    """For a ``None`` quantizer, make_empty_traceable produces a plain tensor."""
+    t = make_empty_traceable(None, (2, 3), dtype=torch.float32, device="cpu")
+    assert not isinstance(t, QuantizedTensor)
+    assert t.shape == (2, 3)
+    assert t.dtype == torch.float32
 
 
 @pytest.mark.parametrize("factory, shape", _SPEC_QUANTIZERS)
-def test_to_tensor_spec_quantized(factory, shape):
-    """``to_tensor_spec`` round-trips a quantized tensor back into a spec."""
+def test_make_empty_traceable_roundtrip(factory, shape):
+    """A tensor built via make_empty_traceable can be flattened and unflattened."""
     q = factory()
-    tensor = TensorSpec(
-        shape=shape, dtype=torch.bfloat16, quantizer=q, device=torch.device("cpu")
-    ).create_tensor()
+    tensor = make_empty_traceable(q, shape, dtype=torch.bfloat16, device="cpu")
+    names = tensor._te_flat_names
 
-    spec = to_tensor_spec(tensor)
-    assert spec.is_quantized
-    assert spec.shape == tuple(shape)
-    assert spec.dtype == torch.bfloat16
-    # Same buffer layout as the original tensor.
-    assert spec.inner_names() == tuple(q.inner_tensor_specs(shape))
-    # Rebuilding from the derived spec matches the original tensor's structure.
-    assert _signature(spec.create_tensor(), spec.inner_names()) == _signature(
-        tensor, spec.inner_names()
+    flat_names, flat_ctx = tensor.__tensor_flatten__()
+    assert set(flat_names) == set(names)
+    inner = {name: getattr(tensor, name) for name in flat_names}
+    rebuilt = type(tensor).__tensor_unflatten__(
+        inner, flat_ctx, tuple(tensor.shape), tensor.stride()
     )
+    assert isinstance(rebuilt, QuantizedTensor)
+    assert _signature(rebuilt, flat_names) == _signature(tensor, names)
 
 
 # ---------------------------------------------------------------------------

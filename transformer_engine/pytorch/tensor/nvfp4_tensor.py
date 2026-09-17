@@ -349,7 +349,7 @@ class NVFP4Quantizer(Quantizer):
     def _get_compatible_recipe(self) -> Union[type[Recipe], None]:
         return NVFP4BlockScaling
 
-    # ----- TensorSpec / pure-Python allocation -----
+    # ----- make_empty_traceable / pure-Python allocation -----
 
     def storage_metadata(self, fake_dtype: torch.dtype) -> Dict[str, Any]:
         return {

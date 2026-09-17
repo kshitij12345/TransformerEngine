@@ -226,7 +226,7 @@ class QuantizedTensorStorage:
         for name, buf in zip(names, gathered):
             setattr(self, name, buf)
 
-    # ----- PyTorch subclass flatten protocol (torch.compile / TensorSpec) -----
+    # ----- PyTorch subclass flatten protocol (torch.compile / make_empty_traceable) -----
 
     # Collected from the subclasses' :class:`InnerTensor` field annotations; everything
     # else returned by :meth:`get_metadata` is treated as non-tensor context.
@@ -498,7 +498,7 @@ class Quantizer(abc.ABC):
             result.requires_grad_(True)
         return result
 
-    # ----- Data-free inner-tensor/metadata primitives backing TensorSpec -----
+    # ----- Data-free inner-tensor/metadata primitives backing make_empty_traceable -----
 
     def inner_tensor_specs(
         self, shape: Tuple[int, ...]
@@ -512,7 +512,7 @@ class Quantizer(abc.ABC):
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement inner_tensor_specs; "
-            "it cannot be used with TensorSpec / pure-Python allocation"
+            "it cannot be used with make_empty_traceable / pure-Python allocation"
         )
 
     def storage_metadata(self, fake_dtype: torch.dtype) -> Dict[str, Any]:
@@ -526,7 +526,7 @@ class Quantizer(abc.ABC):
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement storage_metadata; "
-            "it cannot be used with TensorSpec / pure-Python allocation"
+            "it cannot be used with make_empty_traceable / pure-Python allocation"
         )
 
     def alloc_tensors(

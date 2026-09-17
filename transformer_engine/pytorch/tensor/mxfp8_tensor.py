@@ -62,7 +62,7 @@ class MXFP8Quantizer(Quantizer):
 
         return quantizer
 
-    # ----- TensorSpec / pure-Python allocation -----
+    # ----- make_empty_traceable / pure-Python allocation -----
 
     def storage_metadata(self, fake_dtype: torch.dtype) -> Dict[str, Any]:
         return {
